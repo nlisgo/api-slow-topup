@@ -3,38 +3,69 @@ import { createHash } from 'crypto';
 import { FileSystem, HttpClient } from '@effect/platform';
 
 const apiBasePath = 'https://api.prod.elifesciences.org/reviewed-preprints';
+const getCachedFilePath = '.cached/reviewed-preprints';
+const getCachedListFile = `${getCachedFilePath}.json`;
+const getCachedListFileNew = `${getCachedFilePath}-new.json`;
+const getCachedFile = (msid: string) => `${getCachedFilePath}/${msid}.json`;
+
+const stringifyJson = (data: unknown, formatted: boolean = true) => JSON.stringify(data, undefined, formatted ? 2 : undefined);
 
 const reviewedPreprintItemCodec = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
-  published: Schema.String,
-  statusDate: Schema.String,
+  published: Schema.DateFromString,
+  statusDate: Schema.DateFromString,
+  hash: Schema.optional(Schema.String),
 });
 
-export const reviewedPreprintsCodec = Schema.Array(
-  Schema.Struct({
-    id: Schema.String,
-    title: Schema.String,
-    published: Schema.String,
-    statusDate: Schema.String,
-    hash: Schema.optional(Schema.String),
-  }),
+const reviewedPreprintsCodec = Schema.Array(
+  reviewedPreprintItemCodec,
 );
 
 const paginatedReviewedPreprintsCodec = Schema.Struct({
   total: Schema.Number,
-  items: Schema.Array(reviewedPreprintItemCodec),
+  items: reviewedPreprintsCodec,
 });
 
-export const reviewedPreprintCodec = reviewedPreprintItemCodec;
+const retrieveIndividualReviewedPreprints = (reviewedPreprints: Array<{ msid: string, path: string }>) => pipe(
+  reviewedPreprints.map((reviewedPreprint) =>
+    pipe(
+      HttpClient.get(`${apiBasePath}/${reviewedPreprint.msid}`),
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(Schema.decodeUnknown(reviewedPreprintItemCodec)),
+      Effect.map((result) => ({
+        ...reviewedPreprint,
+        result,
+      })),
+    ),
+  ),
+  Effect.all,
+  Effect.tap((results) =>
+    Effect.flatMap(FileSystem.FileSystem, (fs) =>
+      Effect.all(
+        results.map((r) => fs.writeFileString(r.path, stringifyJson(r.result)))
+      )
+    )
+  ),
+);
 
-const getCachedFilePath = '.cached/reviewed-preprints';
+const reviewedPreprintsTopUpPath = ({ limit = 10, page = 1 }: { limit?: number, page?: number } = {}): string => `${apiBasePath}?order=asc&page=${page}&per-page=${Math.min(limit, 100)}`;
 
-const getCachedListFile = `${getCachedFilePath}.json`;
-const getCachedFile = (msid: string) => `${getCachedFilePath}/${msid}.json`;
+const getReviewedPreprintsTopUpPage = ({ limit, page = 1 }: { limit: number, page?: number }) => pipe(
+  Effect.succeed(reviewedPreprintsTopUpPath({ limit, page })),
+  Effect.tap(Effect.log),
+  Effect.flatMap(HttpClient.get),
+  Effect.flatMap((res) => res.json),
+  Effect.flatMap(Schema.decodeUnknown(paginatedReviewedPreprintsCodec)),
+  Effect.map((response) => response.items),
+  Effect.map(Array.map((item) => ({
+    ...item,
+    hash: createHash('md5').update(JSON.stringify(item)).digest('hex'),
+  }))),
+);
 
-export const getCachedReviewedPreprints = () => pipe(
-  Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(getCachedListFile)),
+const getCachedReviewedPreprints = (file?: string) => pipe(
+  Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(file ?? getCachedListFile)),
   Effect.flatMap((input) => Effect.try({
     try: () => JSON.parse(input),
     catch: (error) => new Error(`Invalid JSON: ${error}`),
@@ -60,63 +91,68 @@ const missingIndividualReviewedPreprints = pipe(
   Effect.map((results) => results.filter(({ exists }) => !exists).map(({ msid, path }) => ({ msid, path })))
 );
 
-const retrieveIndividualReviewedPreprints = (reviewedPreprints: Array<{ msid: string, path: string }>) => pipe(
-  reviewedPreprints.map((reviewedPreprint) =>
-    pipe(
-      HttpClient.get(`${apiBasePath}/${reviewedPreprint.msid}`),
-      Effect.flatMap((response) => response.json),
-      Effect.flatMap(Schema.decodeUnknown(reviewedPreprintCodec)),
-      Effect.map((result) => ({
-        ...reviewedPreprint,
-        result,
-      })),
-    ),
-  ),
-  Effect.all,
-  Effect.tap((results) =>
-    Effect.flatMap(FileSystem.FileSystem, (fs) =>
-      Effect.all(
-        results.map((r) => fs.writeFileString(r.path, JSON.stringify(r.result, undefined, 2)))
-      )
-    )
-  ),
-);
-
-export const retrieveMissingIndividualReviewedPreprints = () => pipe(
+const retrieveMissingIndividualReviewedPreprints = () => pipe(
   missingIndividualReviewedPreprints,
   Effect.flatMap(retrieveIndividualReviewedPreprints),
 );
 
-export const reviewedPreprintsTopUp = ({ limit }: { limit: number }) => pipe(
+const reviewedPreprintsTopUpWrite = ({ limit }: { limit: number }) => pipe(
   getCachedReviewedPreprints(),
   Effect.flatMap((cached) => getReviewedPreprintsTopUp({ limit, offset: cached.length })),
-  (topUp) => Effect.all([topUp, getCachedReviewedPreprints()]),
+  Effect.map((reviewedPreprints) => stringifyJson(reviewedPreprints)),
+  Effect.tap((reviewedPreprints) => Effect.flatMap(FileSystem.FileSystem, (fs) => fs.writeFileString(getCachedListFileNew, reviewedPreprints))),
+);
+
+const reviewedPreprintsTopUpCombine = () => pipe(
+  Effect.all([
+    getCachedReviewedPreprints(),
+    getCachedReviewedPreprints(getCachedListFileNew),
+  ]),
   Effect.map((reviewedPreprints) => reviewedPreprints.flat()),
-  Effect.map((reviewedPreprints) => JSON.stringify(reviewedPreprints, undefined, 2)),
+  Effect.map((reviewedPreprints) => stringifyJson(reviewedPreprints)),
   Effect.tap((reviewedPreprints) => Effect.flatMap(FileSystem.FileSystem, (fs) => fs.writeFileString(getCachedListFile, reviewedPreprints))),
-  Effect.tapErrorCause((cause) => Effect.logError(cause)),
 );
 
-const reviewedPreprintsTopUpPath = ({ limit = 10, page = 1 }: { limit?: number, page?: number } = {}): string => `${apiBasePath}?order=asc&page=${page}&per-page=${Math.min(limit, 100)}`;
-
-const getReviewedPreprintsTopUpPage = ({ limit, page = 1 }: { limit: number, page?: number }) => pipe(
-  Effect.succeed(reviewedPreprintsTopUpPath({ limit, page })),
-  Effect.tap(Effect.log),
-  Effect.flatMap(HttpClient.get),
-  Effect.flatMap((res) => res.json),
-  Effect.flatMap(Schema.decodeUnknown(paginatedReviewedPreprintsCodec)),
-  Effect.map((response) => response.items),
-  Effect.map(Array.map((item) => ({
-    ...item,
-    hash: createHash('md5').update(JSON.stringify(item)).digest('hex'),
-  }))),
+const reviewedPreprintsTopUpInvalidate = () => pipe(
+  getCachedReviewedPreprints(getCachedListFileNew),
+  Effect.map(Array.map(({ id: msid }) => getCachedFile(msid))),
+  Effect.flatMap((paths) =>
+    Effect.flatMap(
+      FileSystem.FileSystem,
+      (fs) =>
+        Effect.forEach(
+          paths,
+          (path) => fs.remove(path, { force: true }),
+          { discard: true },
+        ),
+    ),
+  ),
 );
 
-export const getReviewedPreprintsTopUp = ({ limit, offset = 0 }: { limit: number, offset?: number }) => pipe(
+const reviewedPreprintsTopUpTidyUp = () => Effect.flatMap(
+  FileSystem.FileSystem,
+  (fs) => fs.remove(getCachedListFileNew, { force: true }),
+);
+
+const getReviewedPreprintsTopUp = ({ limit, offset = 0 }: { limit: number, offset?: number }) => pipe(
   offset > 0 ? Math.floor((offset + limit) / limit) : 1,
   (page) => [page, ...((page > 0 && offset % limit > 0) ? [page + 1] : [])],
   Array.map((page) => getReviewedPreprintsTopUpPage({ limit, page })),
   Effect.all,
   Effect.map((pages) => pages.flat()),
   Effect.map((results) => results.slice(offset % limit, (offset % limit) + limit)),
+);
+
+const createCacheFolder = () => Effect.flatMap(
+  FileSystem.FileSystem,
+  (fs) => fs.makeDirectory(getCachedFilePath, { recursive: true }),
+);
+
+export const reviewedPreprintsTopUp = ({ limit }: { limit: number }) => pipe(
+  createCacheFolder(),
+  Effect.flatMap(() => reviewedPreprintsTopUpWrite({ limit })),
+  Effect.flatMap(reviewedPreprintsTopUpInvalidate),
+  Effect.flatMap(reviewedPreprintsTopUpCombine),
+  Effect.flatMap(reviewedPreprintsTopUpTidyUp),
+  Effect.flatMap(retrieveMissingIndividualReviewedPreprints),
 );

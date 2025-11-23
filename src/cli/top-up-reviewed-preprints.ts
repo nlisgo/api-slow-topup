@@ -3,7 +3,6 @@ import { NodeContext, NodeFileSystem, NodeRuntime } from '@effect/platform-node'
 import { Effect, Schema } from 'effect';
 import { CliConfig, Command, Options } from '@effect/cli';
 import {
-  retrieveMissingIndividualReviewedPreprints,
   reviewedPreprintsTopUp
 } from '../queries/reviewed-preprints';
 import { FetchHttpClient } from '@effect/platform';
@@ -18,11 +17,7 @@ const limit = Options.integer('limit')
 const command = Command.make(
   'top-up-reviewed-preprints',
   { limit },
-  ({ limit }) => reviewedPreprintsTopUp({ limit })
-    .pipe(
-      Effect.flatMap(retrieveMissingIndividualReviewedPreprints),
-      Effect.asVoid,
-    ),
+  ({ limit }) => reviewedPreprintsTopUp({ limit }),
 );
 
 const cliApp = Command.run(command, {
