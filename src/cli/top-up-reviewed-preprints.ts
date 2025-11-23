@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect';
 import { CliConfig, Command, Options } from '@effect/cli';
 import {
   reviewedPreprintsTopUp
-} from '../queries/reviewed-preprints';
+} from '@/queries/reviewed-preprints';
 import { FetchHttpClient } from '@effect/platform';
 
 const limit = Options.integer('limit')

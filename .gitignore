@@ -1,4 +1,5 @@
 node_modules
 .idea/
 .cached/
-
+*.buildinfo
+*.tsbuildinfo
