@@ -31,26 +31,28 @@ const paginatedReviewedPreprintsCodec = Schema.Struct({
   items: reviewedPreprintsCodec,
 });
 
-const retrieveIndividualReviewedPreprints = (reviewedPreprints: Array<{ msid: string, path: string }>) => pipe(
-  reviewedPreprints.map((reviewedPreprint) =>
-    pipe(
-      HttpClient.get(`${apiBasePath}/${reviewedPreprint.msid}`),
-      Effect.flatMap((response) => response.json),
-      Effect.flatMap(Schema.decodeUnknown(reviewedPreprintItemCodec)),
-      Effect.map((result) => ({
-        ...reviewedPreprint,
-        result,
-      })),
-    ),
-  ),
-  Effect.all,
-  Effect.tap((results) =>
-    Effect.flatMap(FileSystem.FileSystem, (fs) =>
-      Effect.all(
-        results.map((r) => fs.writeFileString(r.path, stringifyJson(r.result)))
-      )
-    )
-  ),
+const retrieveIndividualReviewedPreprint = ({ msid, path }: { msid: string, path: string }) => pipe(
+  HttpClient.get(`${apiBasePath}/${msid}`),
+  Effect.flatMap((response) => response.json),
+  Effect.flatMap(Schema.decodeUnknown(reviewedPreprintItemCodec)),
+  Effect.tap((result) => Effect.flatMap(
+    FileSystem.FileSystem,
+    (fs) => fs.writeFileString(path, stringifyJson(result)),
+  )),
+  Effect.map((result) => ({
+    msid,
+    path,
+    result,
+  })),
+);
+
+const retrieveIndividualReviewedPreprints = (reviewedPreprints: Array<{ msid: string, path: string }>) => Effect.forEach(
+  reviewedPreprints,
+  retrieveIndividualReviewedPreprint,
+  {
+    // this is the default, but you can be explicit:
+    concurrency: 'unbounded',
+  }
 );
 
 const reviewedPreprintsTopUpPath = ({ limit = 10, page = 1 }: { limit?: number, page?: number } = {}): string => `${apiBasePath}?order=asc&page=${page}&per-page=${Math.min(limit, 100)}`;
