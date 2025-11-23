@@ -1,0 +1,26 @@
+{
+  "name": "api-slow-topup",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "top-up-reviewed-preprints": "ts-node src/cli/top-up-reviewed-preprints.ts",
+    "test": "jest --runInBand"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.10.1",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.72.1",
+    "@effect/platform": "^0.93.3",
+    "@effect/platform-node": "^0.101.1",
+    "effect": "^3.19.6"
+  }
+}
