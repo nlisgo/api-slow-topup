@@ -1,4 +1,4 @@
-import { Array, Effect, pipe, Schema } from 'effect';
+import { Array, Effect, Order, pipe, Schema } from 'effect';
 import { createHash } from 'crypto';
 import { FileSystem, HttpClient } from '@effect/platform';
 
@@ -18,9 +18,13 @@ const reviewedPreprintItemCodec = Schema.Struct({
   hash: Schema.optional(Schema.String),
 });
 
+type ReviewedPreprint = Schema.Schema.Type<typeof reviewedPreprintItemCodec>
+
 const reviewedPreprintsCodec = Schema.Array(
   reviewedPreprintItemCodec,
 );
+
+type ReviewedPreprints = Schema.Schema.Type<typeof reviewedPreprintsCodec>
 
 const paginatedReviewedPreprintsCodec = Schema.Struct({
   total: Schema.Number,
@@ -107,8 +111,16 @@ const reviewedPreprintsTopUpCombine = () => pipe(
   Effect.all([
     getCachedReviewedPreprints(),
     getCachedReviewedPreprints(getCachedListFileNew),
-  ]),
-  Effect.map((reviewedPreprints) => reviewedPreprints.flat()),
+  ] as const),
+  Effect.map(([oldList, newList]): ReviewedPreprints => Array.appendAll(oldList)(newList)),
+  Effect.map(Array.dedupeWith((a, b) => a.id === b.id)),
+  Effect.map(
+    Array.sort(
+      Order.reverse(
+        Order.mapInput(Order.number, (item) => item.statusDate.getTime()),
+      ) as Order.Order<ReviewedPreprint>,
+    ),
+  ),
   Effect.map((reviewedPreprints) => stringifyJson(reviewedPreprints)),
   Effect.tap((reviewedPreprints) => Effect.flatMap(FileSystem.FileSystem, (fs) => fs.writeFileString(getCachedListFile, reviewedPreprints))),
 );
