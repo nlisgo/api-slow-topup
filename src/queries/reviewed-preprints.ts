@@ -94,7 +94,11 @@ const missingIndividualReviewedPreprints = pipe(
       )
     )
   ),
-  Effect.map((results) => results.filter(({ exists }) => !exists).map(({ msid, path }) => ({ msid, path })))
+  Effect.map(
+    (results) => results
+      .filter(({ exists }) => !exists)
+      .map(({ msid, path }) => ({ msid, path })),
+  )
 );
 
 const retrieveMissingIndividualReviewedPreprints = () => pipe(
